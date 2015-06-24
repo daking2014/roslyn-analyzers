@@ -199,7 +199,10 @@ namespace MetaCompilation
         internal static DiagnosticDescriptor LocationIncorrectRule = CreateRule(LocationIncorrect, "Diagnostic location variable incorrect", "This statement should use Location.Create, {0}, and {1} to create the location of the diagnostic", "A location can be created by combining a span with a syntax tree. The span is applie to the given syntax tree so that the location within the syntax tree is determined");
         #endregion
 
-       
+        #region FixableDiagnosticIds
+        public const string MissingFixable = "MetaAnalyzer50";
+        internal static DiagnosticDescriptor MissingFixableRule = CreateRule(MissingFixable, "Missing FixableDiagnosticIds", "The code fix provider is missing the required FixableDiagnosticIds property");
+        #endregion
 
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
         {
@@ -2517,7 +2520,46 @@ namespace MetaCompilation
             //returns a bool representing whether or not the FixableDiagnosticsIds property is correct
             internal bool CheckFixableDiagnosticIds(CompilationAnalysisContext context)
             {
-                throw new NotImplementedException();
+                if (_codeFixFixableDiagnostics == null)
+                {
+                    ReportDiagnostic(context, MissingFixableRule, _codeFixClassSymbol.Locations[0]);
+                    return false;
+                }
+
+                PropertyDeclarationSyntax propertyDeclaration = CheckFixableSignature(context);
+                if (propertyDeclaration == null)
+                {
+                    ReportDiagnostic(context, MissingFixableRule, _codeFixClassSymbol.Locations[0]);
+                    return false;
+                }
+
+                var getAccessorBody = CheckAccessors(context, propertyDeclaration) as BlockSyntax;
+                propertyDeclaration.AccessorList.Accessors[0].B
+                return true;
+            }
+
+            //checks the accessors of FixableDiagnosticIds, returning the statements within the get accessor, or null if something went wrong
+            internal BlockSyntax CheckAccessors(CompilationAnalysisContext context, PropertyDeclarationSyntax propertyDeclaration)
+            {
+                AccessorListSyntax accessorList = propertyDeclaration.AccessorList;
+            }
+
+            //checks the signature of the FixableDiagnosticIds property, returning the PropertyDeclarationSyntax or null if failed
+            internal PropertyDeclarationSyntax CheckFixableSignature(CompilationAnalysisContext context)
+            {
+                var propertyDeclaration = _codeFixFixableDiagnostics.DeclaringSyntaxReferences[0].GetSyntax() as PropertyDeclarationSyntax;
+                if (propertyDeclaration == null)
+                {
+                    return null;
+                }
+
+                if (!_codeFixFixableDiagnostics.IsOverride || _codeFixFixableDiagnostics.DeclaredAccessibility != Accessibility.Public || propertyDeclaration.Type.ToString() != "System.Collections.Immutable.ImmutableArray<string>" || propertyDeclaration.Identifier.Text != "FixableDiagnosticIds")
+                {
+                    return null;
+                }
+
+                return propertyDeclaration;
+
             }
 
             //clears all state
