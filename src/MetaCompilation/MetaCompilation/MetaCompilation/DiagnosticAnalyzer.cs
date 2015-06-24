@@ -202,6 +202,12 @@ namespace MetaCompilation
         #region FixableDiagnosticIds
         public const string MissingFixable = "MetaAnalyzer50";
         internal static DiagnosticDescriptor MissingFixableRule = CreateRule(MissingFixable, "Missing FixableDiagnosticIds", "The code fix provider is missing the required FixableDiagnosticIds property");
+
+        public const string MissingGetAccessorFixable = "MetaAnalyzer51";
+        internal static DiagnosticDescriptor MissingGetAccessorFixableRule = CreateRule(MissingGetAccessorFixable, "Missing get accessor", "The {0} property needs to have a get accessor");
+
+        public const string TooManyAccessorsFixable = "MetaAnalyzer52";
+        internal static DiagnosticDescriptor TooManyAccessorsFixableRule = CreateRule(TooManyAccessorsFixable, "Too many accessors", "The {0} property should only have one, get accessor");
         #endregion
 
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
@@ -2534,7 +2540,7 @@ namespace MetaCompilation
                 }
 
                 var getAccessorBody = CheckAccessors(context, propertyDeclaration) as BlockSyntax;
-                propertyDeclaration.AccessorList.Accessors[0].B
+
                 return true;
             }
 
@@ -2542,6 +2548,11 @@ namespace MetaCompilation
             internal BlockSyntax CheckAccessors(CompilationAnalysisContext context, PropertyDeclarationSyntax propertyDeclaration)
             {
                 AccessorListSyntax accessorList = propertyDeclaration.AccessorList;
+                if (accessorList == null)
+                {
+                    ReportDiagnostic(context, TooManyAccessorsFixableRule, propertyDeclaration.Identifier.GetLocation(), propertyDeclaration.Identifier.Text);
+                    return null;
+                }
             }
 
             //checks the signature of the FixableDiagnosticIds property, returning the PropertyDeclarationSyntax or null if failed
