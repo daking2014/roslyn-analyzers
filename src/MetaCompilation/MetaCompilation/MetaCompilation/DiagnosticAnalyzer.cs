@@ -315,8 +315,138 @@ namespace MetaCompilation
 
         public override void Initialize(AnalysisContext context)
         {
-            context.RegisterCompilationStartAction(SetupAnalysis);
+            //context.RegisterCompilationStartAction(SetupAnalysis);
+            context.RegisterSyntaxNodeAction(IdMissing, SyntaxKind.ClassDeclaration);
+            context.RegisterSyntaxNodeAction(IdAnalysis, SyntaxKind.FieldDeclaration);
         }
+
+        private void IdMissing(SyntaxNodeAnalysisContext context)
+        {
+            var classDecl = (ClassDeclarationSyntax)context.Node;
+            var correctClass = MetaHelper.InCorrectClass(classDecl);
+            if (correctClass == null)
+            {
+                return;
+            }
+            var idNames = MetaHelper.CheckIds(classDecl);
+            if (idNames.Count == 0)
+            {
+                MetaHelper.ReportDiagnostic(context, MissingIdRule, correctClass.Identifier.GetLocation(), correctClass.Identifier.Text);
+            }
+        }
+
+        private void IdAnalysis(SyntaxNodeAnalysisContext context)
+        {
+            var field = context.Node as FieldDeclarationSyntax;
+            var correctClass = MetaHelper.InCorrectClass(field);
+            if (correctClass == null)
+            {
+                return;
+            }
+
+            var idNames = MetaHelper.CheckIds(correctClass);
+        }
+
+        private void MethodAnalysis(SyntaxNodeAnalysisContext obj)
+        {
+            return;
+        }
+
+        private class MetaHelper
+        {
+            internal static ClassDeclarationSyntax InCorrectClass(SyntaxNode startNode)
+            {
+                var classDeclaration = startNode.AncestorsAndSelf().OfType<ClassDeclarationSyntax>().First();
+                var baseList = classDeclaration.BaseList;
+                if (baseList == null)
+                {
+                    return null;
+                }
+
+                SeparatedSyntaxList<BaseTypeSyntax> types = baseList.Types;
+                if (types == null || types.Count == 0)
+                {
+                    return null;
+                }
+
+                BaseTypeSyntax baseType = types.First();
+                if (baseType == null)
+                {
+                    return null;
+                }
+
+                var type = baseType.Type as IdentifierNameSyntax;
+                if (type == null || type.Identifier.Text != "DiagnosticAnalyzer")
+                {
+                    return null;
+                }
+
+                return classDeclaration;
+            }
+
+            // Returns a list of id names, empty if none found
+            internal static List<string> CheckIds(ClassDeclarationSyntax classDecl)
+            {
+                List<string> idNames = new List<string>();
+                var fieldDecls = classDecl.Members.OfType<FieldDeclarationSyntax>();
+                foreach (FieldDeclarationSyntax field in fieldDecls)
+                {
+                    var modifiers = field.Modifiers;
+                    if (modifiers == null || modifiers.Count != 2)
+                    {
+                        continue;
+                    }
+
+                    var publicModifier = modifiers[0];
+                    var constModifier = modifiers[1];
+                    if (publicModifier == null || constModifier == null || publicModifier.Text != "public" || constModifier.Text != "const")
+                    {
+                        continue;
+                    }
+
+                    var variableDeclaration = field.Declaration as VariableDeclarationSyntax;
+                    if (variableDeclaration == null)
+                    {
+                        continue;
+                    }
+
+                    var type = variableDeclaration.Type as TypeSyntax;
+                    if (type == null || type.ToString() != "string" )
+                    {
+                        continue;
+                    }
+
+                    var variable = variableDeclaration.Variables[0] as VariableDeclaratorSyntax;
+                    if (variable == null)
+                    {
+                        continue;
+                    }
+
+                    var equalsValue = variable.Initializer as EqualsValueClauseSyntax;
+                    if (equalsValue == null)
+                    {
+                        continue;
+                    }
+
+                    var identifier = variable.Identifier;
+                    if (identifier == null)
+                    {
+                        continue;
+                    }
+
+                    idNames.Add(identifier.Text);
+                }
+
+                return idNames;
+            }
+
+            //reports a diagnostics
+            internal static void ReportDiagnostic(SyntaxNodeAnalysisContext context, DiagnosticDescriptor rule, Location location, params string[] messageArgs)
+            {
+                Diagnostic diagnostic = Diagnostic.Create(rule, location, messageArgs);
+                context.ReportDiagnostic(diagnostic);
+            }
+        } 
 
         //creates an instance of a class to perform the analysis statefully, and registers for various actions
         private void SetupAnalysis(CompilationStartAnalysisContext context)
