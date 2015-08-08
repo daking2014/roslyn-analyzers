@@ -567,7 +567,7 @@ namespace MetaCompilation
                         if (messageDeclarations.Count() != 0)
                         {
                             LiteralExpressionSyntax declaration = messageDeclarations.First();
-                            context.RegisterCodeFix(CodeAction.Create(MessagePrefix + "Replace the title", c => ReplaceMessage(context.Document, declaration, c), "Replace the title"), diagnostic);
+                            context.RegisterCodeFix(CodeAction.Create(MessagePrefix + "Replace the message", c => ReplaceMessage(context.Document, declaration, c), "Replace the title"), diagnostic);
                         }
                         break;
                     case MetaCompilationAnalyzer.Category:
@@ -575,7 +575,7 @@ namespace MetaCompilation
                         if (categoryDeclarations.Count() != 0)
                         {
                             LiteralExpressionSyntax declaration = categoryDeclarations.First();
-                            context.RegisterCodeFix(CodeAction.Create(MessagePrefix + "Replace the title", c => ReplaceCategory(context.Document, declaration, c), "Replace the title"), diagnostic);
+                            context.RegisterCodeFix(CodeAction.Create(MessagePrefix + "Replace the category", c => ReplaceCategory(context.Document, declaration, c), "Replace the title"), diagnostic);
                         }
                         break;
                 }
