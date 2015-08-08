@@ -315,9 +315,51 @@ namespace MetaCompilation
 
         public override void Initialize(AnalysisContext context)
         {
-            //context.RegisterCompilationStartAction(SetupAnalysis);
             context.RegisterSyntaxNodeAction(IdMissing, SyntaxKind.ClassDeclaration);
             context.RegisterSyntaxNodeAction(IdAnalysis, SyntaxKind.FieldDeclaration);
+            context.RegisterSyntaxNodeAction(RuleMissing, SyntaxKind.ClassDeclaration);
+            context.RegisterSyntaxNodeAction(RuleAnalysis, SyntaxKind.FieldDeclaration);
+        }
+
+        private void RuleAnalysis(SyntaxNodeAnalysisContext context)
+        {
+            var fieldDecl = (FieldDeclarationSyntax)context.Node;
+            var correctClass = MetaHelper.InCorrectClass(fieldDecl);
+            if (correctClass == null)
+            {
+                return;
+            }
+
+            var idNames = MetaHelper.CheckIds(correctClass, false);
+            if (idNames.Count == 0)
+            {
+                return;
+            }
+
+            MetaHelper.CheckRule(idNames, context, fieldDecl, true);
+        }
+
+        private void RuleMissing(SyntaxNodeAnalysisContext context)
+        {
+            var classDecl = (ClassDeclarationSyntax)context.Node;
+            var correctClass = MetaHelper.InCorrectClass(classDecl);
+            if (correctClass == null)
+            {
+                return;
+            }
+
+            var idNames = MetaHelper.CheckIds(correctClass, false);
+            if (idNames.Count == 0)
+            {
+                return;
+            }
+
+            var ruleInfo = MetaHelper.CheckRules(idNames, context, correctClass, false);
+            if (ruleInfo.RuleNames.Count == 0)
+            {
+                var firstId = MetaHelper.GetFirstId(correctClass);
+                MetaHelper.ReportDiagnostic(context, MissingRuleRule, firstId.Declaration.Variables[0].Identifier.GetLocation());
+            }
         }
 
         private void IdMissing(SyntaxNodeAnalysisContext context)
@@ -328,7 +370,8 @@ namespace MetaCompilation
             {
                 return;
             }
-            var idNames = MetaHelper.CheckIds(classDecl);
+
+            var idNames = MetaHelper.CheckIds(correctClass, false);
             if (idNames.Count == 0)
             {
                 MetaHelper.ReportDiagnostic(context, MissingIdRule, correctClass.Identifier.GetLocation(), correctClass.Identifier.Text);
@@ -344,7 +387,7 @@ namespace MetaCompilation
                 return;
             }
 
-            var idNames = MetaHelper.CheckIds(correctClass);
+            var idNames = MetaHelper.CheckIds(correctClass, true);
         }
 
         private void MethodAnalysis(SyntaxNodeAnalysisContext obj)
@@ -385,56 +428,19 @@ namespace MetaCompilation
             }
 
             // Returns a list of id names, empty if none found
-            internal static List<string> CheckIds(ClassDeclarationSyntax classDecl)
+            internal static List<string> CheckIds(ClassDeclarationSyntax classDecl, bool report)
             {
                 List<string> idNames = new List<string>();
                 var fieldDecls = classDecl.Members.OfType<FieldDeclarationSyntax>();
                 foreach (FieldDeclarationSyntax field in fieldDecls)
                 {
-                    var modifiers = field.Modifiers;
-                    if (modifiers == null || modifiers.Count != 2)
+                    var name = IsId(field);
+                    if (name == null)
                     {
                         continue;
                     }
 
-                    var publicModifier = modifiers[0];
-                    var constModifier = modifiers[1];
-                    if (publicModifier == null || constModifier == null || publicModifier.Text != "public" || constModifier.Text != "const")
-                    {
-                        continue;
-                    }
-
-                    var variableDeclaration = field.Declaration as VariableDeclarationSyntax;
-                    if (variableDeclaration == null)
-                    {
-                        continue;
-                    }
-
-                    var type = variableDeclaration.Type as TypeSyntax;
-                    if (type == null || type.ToString() != "string" )
-                    {
-                        continue;
-                    }
-
-                    var variable = variableDeclaration.Variables[0] as VariableDeclaratorSyntax;
-                    if (variable == null)
-                    {
-                        continue;
-                    }
-
-                    var equalsValue = variable.Initializer as EqualsValueClauseSyntax;
-                    if (equalsValue == null)
-                    {
-                        continue;
-                    }
-
-                    var identifier = variable.Identifier;
-                    if (identifier == null)
-                    {
-                        continue;
-                    }
-
-                    idNames.Add(identifier.Text);
+                    idNames.Add(name);
                 }
 
                 return idNames;
@@ -445,6 +451,650 @@ namespace MetaCompilation
             {
                 Diagnostic diagnostic = Diagnostic.Create(rule, location, messageArgs);
                 context.ReportDiagnostic(diagnostic);
+            }
+
+            internal static void CheckRule(List<string> idNames, SyntaxNodeAnalysisContext context, FieldDeclarationSyntax fieldDecl, bool report)
+            {
+                var variableDeclaration = fieldDecl.Declaration as VariableDeclarationSyntax;
+                if (variableDeclaration == null)
+                {
+                   return;
+                }
+
+                var type = variableDeclaration.Type;
+                if (type == null || type.ToString() != "DiagnosticDescriptor")
+                {
+                    return;
+                }
+
+                var variableDeclarator = variableDeclaration.Variables[0] as VariableDeclaratorSyntax;
+                if (variableDeclarator == null)
+                {
+                    return;
+                }
+
+                var initializer = variableDeclarator.Initializer as EqualsValueClauseSyntax;
+                if (initializer == null)
+                {
+                    return;
+                }
+
+                var objectCreationSyntax = initializer.Value as ObjectCreationExpressionSyntax;
+                if (objectCreationSyntax == null)
+                {
+                    return;
+                }
+
+                var modifiers = fieldDecl.Modifiers;
+                if (modifiers == null || modifiers.Count != 2)
+                {
+                    if (report)
+                    {
+                        ReportDiagnostic(context, InternalAndStaticErrorRule, variableDeclarator.Identifier.GetLocation(), variableDeclarator.Identifier.Text);
+                    }
+
+                    return;
+                }
+
+                var internalModifier = modifiers[0];
+                var staticModifier = modifiers[1];
+                if (internalModifier == null || staticModifier == null || internalModifier.Text != "internal" || staticModifier.Text != "static")
+                {
+                    if (report)
+                    {
+                        ReportDiagnostic(context, InternalAndStaticErrorRule, variableDeclarator.Identifier.GetLocation(), variableDeclarator.Identifier.Text);
+                    }
+
+                    return;
+                }
+
+                var ruleArgumentList = objectCreationSyntax.ArgumentList;
+
+                for (int i = 0; i < ruleArgumentList.Arguments.Count; i++)
+                {
+                    var currentArg = ruleArgumentList.Arguments[i];
+                    if (currentArg == null)
+                    {
+                        return;
+                    }
+
+                    if (currentArg.NameColon != null)
+                    {
+                        string currentArgName = currentArg.NameColon.Name.Identifier.Text;
+                        var currentArgExpr = currentArg.Expression;
+                        var currentArgExprIdentifier = currentArgExpr as IdentifierNameSyntax;
+
+                        if (currentArgName == "isEnabledByDefault")
+                        {
+                            if (currentArgExprIdentifier != null)
+                            {
+                                if (currentArgExprIdentifier.Identifier.Text == "")
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, EnabledByDefaultErrorRule, currentArg.GetLocation());
+                                    }
+
+                                    return;
+                                }
+                            }
+
+                            if (!currentArgExpr.IsKind(SyntaxKind.TrueLiteralExpression))
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, EnabledByDefaultErrorRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+                        }
+                        else if (currentArgName == "defaultSeverity")
+                        {
+                            if (currentArgExprIdentifier != null)
+                            {
+                                if (currentArgExprIdentifier.Identifier.Text == "")
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, DefaultSeverityErrorRule, currentArg.GetLocation());
+                                    }
+
+                                    return;
+                                }
+                            }
+
+                            var memberAccessExpr = currentArgExpr as MemberAccessExpressionSyntax;
+                            if (memberAccessExpr == null)
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+
+                            var expressionIdentifier = memberAccessExpr.Expression as IdentifierNameSyntax;
+                            if (expressionIdentifier == null)
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+
+                            string expressionText = expressionIdentifier.Identifier.Text;
+
+                            var expressionName = memberAccessExpr.Name as IdentifierNameSyntax;
+                            if (expressionName == null)
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+
+                            string identifierName = memberAccessExpr.Name.Identifier.Text;
+
+                            List<string> severities = new List<string> { "Warning", "Error" };
+
+                            if (expressionText != "DiagnosticSeverity")
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+                            else if (!severities.Contains(identifierName))
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+                        }
+                        else if (currentArgName == "id")
+                        {
+                            if (currentArgExprIdentifier != null)
+                            {
+                                if (currentArgExprIdentifier.Identifier.Text == "")
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, IdDeclTypeErrorRule, Location.Create(currentArg.SyntaxTree, currentArg.NameColon.ColonToken.TrailingTrivia.FullSpan));
+                                    }
+
+                                    return;
+                                }
+                            }
+
+
+                            if (currentArgExpr.IsKind(SyntaxKind.StringLiteralExpression))
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, IdStringLiteralRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+
+                            if (!currentArgExpr.IsKind(SyntaxKind.IdentifierName))
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, IdDeclTypeErrorRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+
+                            bool ruleIdFound = false;
+
+                            foreach (string idName in idNames)
+                            {
+                                if (idName == currentArgExprIdentifier.Identifier.Text)
+                                {
+                                    ruleIdFound = true;
+                                }
+                            }
+
+                            if (!ruleIdFound)
+                            {
+                                if (report)
+                                {
+                                    ReportDiagnostic(context, MissingIdDeclarationRule, currentArgExpr.GetLocation());
+                                }
+
+                                return;
+                            }
+                        }
+                        else if (currentArgName == "title" || currentArgName == "messageFormat" || currentArgName == "category")
+                        {
+                            Dictionary<string, string> argDefaults = new Dictionary<string, string>();
+                            argDefaults.Add("title", "Enter a title for this diagnostic");
+                            argDefaults.Add("messageFormat", "Enter a message to be displayed with this diagnostic");
+                            argDefaults.Add("category", "Enter a category for this diagnostic (e.g. Formatting)");
+
+                            if (currentArgExpr.IsKind(SyntaxKind.StringLiteralExpression))
+                            {
+                                if ((currentArgExpr as LiteralExpressionSyntax).Token.ValueText == argDefaults[currentArgName])
+                                {
+                                    if (currentArgName == "title")
+                                    {
+                                        if (report)
+                                        {
+                                            ReportDiagnostic(context, TitleRule, currentArgExpr.GetLocation());
+                                        }
+
+                                        return;
+                                    }
+                                    else if (currentArgName == "messageFormat")
+                                    {
+                                        if (report)
+                                        {
+                                            ReportDiagnostic(context, MessageRule, currentArgExpr.GetLocation());
+                                        }
+
+                                        return;
+                                    }
+                                    else if (currentArgName == "category")
+                                    {
+                                        if (report)
+                                        {
+                                            ReportDiagnostic(context, CategoryRule, currentArgExpr.GetLocation());
+                                        }
+
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (ruleArgumentList.Arguments.Count != 6)
+                {
+                    return;
+                }
+            }
+
+            // Returns a list of rule names
+            internal static RuleInfo CheckRules(List<string> idNames, SyntaxNodeAnalysisContext context, ClassDeclarationSyntax classDecl, bool report)
+            {
+                List<string> ruleNames = new List<string>();
+                var returnInfo = new RuleInfo();
+                returnInfo.correctRuleFound = false;
+                returnInfo.RuleNames = ruleNames;
+                var fieldDecls = classDecl.Members.OfType<FieldDeclarationSyntax>();
+
+                foreach (FieldDeclarationSyntax field in fieldDecls)
+                {
+                    var variableDeclaration = field.Declaration as VariableDeclarationSyntax;
+                    if (variableDeclaration == null)
+                    {
+                        continue;
+                    }
+
+                    var type = variableDeclaration.Type;
+                    if (type == null || type.ToString() != "DiagnosticDescriptor")
+                    {
+                        continue;
+                    }
+
+                    var variableDeclarator = variableDeclaration.Variables[0] as VariableDeclaratorSyntax;
+                    if (variableDeclarator == null)
+                    {
+                        return returnInfo;
+                    }
+
+                    var initializer = variableDeclarator.Initializer as EqualsValueClauseSyntax;
+                    if (initializer == null)
+                    {
+                        return returnInfo;
+                    }
+
+                    var objectCreationSyntax = initializer.Value as ObjectCreationExpressionSyntax;
+                    if (objectCreationSyntax == null)
+                    {
+                        return returnInfo;
+                    }
+
+                    ruleNames.Add(variableDeclarator.Identifier.Text);
+                    returnInfo.RuleNames = ruleNames;
+                    var ruleArgumentList = objectCreationSyntax.ArgumentList;
+
+                    var modifiers = field.Modifiers;
+                    if (modifiers == null || modifiers.Count != 2)
+                    {
+                        if (report)
+                        {
+                            ReportDiagnostic(context, InternalAndStaticErrorRule, variableDeclarator.Identifier.GetLocation(), variableDeclarator.Identifier.Text);
+                        }
+
+                        return returnInfo;
+                    }
+
+                    var internalModifier = modifiers[0];
+                    var staticModifier = modifiers[1];
+                    if (internalModifier == null || staticModifier == null || internalModifier.Text != "internal" || staticModifier.Text != "static")
+                    {
+                        if (report)
+                        {
+                            ReportDiagnostic(context, InternalAndStaticErrorRule, variableDeclarator.Identifier.GetLocation(), variableDeclarator.Identifier.Text);
+                        }
+
+                        return returnInfo;
+                    }
+
+                    for (int i = 0; i < ruleArgumentList.Arguments.Count; i++)
+                    {
+                        var currentArg = ruleArgumentList.Arguments[i];
+                        if (currentArg == null)
+                        {
+                            return returnInfo;
+                        }
+
+                        if (currentArg.NameColon != null)
+                        {
+                            string currentArgName = currentArg.NameColon.Name.Identifier.Text;
+                            var currentArgExpr = currentArg.Expression;
+                            var currentArgExprIdentifier = currentArgExpr as IdentifierNameSyntax;
+
+                            if (currentArgName == "isEnabledByDefault")
+                            {
+                                if (currentArgExprIdentifier != null)
+                                {
+                                    if (currentArgExprIdentifier.Identifier.Text == "")
+                                    {
+                                        if (report)
+                                        {
+                                            ReportDiagnostic(context, EnabledByDefaultErrorRule, currentArg.GetLocation());
+                                        }
+
+                                        return returnInfo;
+                                    }
+                                }
+
+                                if (!currentArgExpr.IsKind(SyntaxKind.TrueLiteralExpression))
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, EnabledByDefaultErrorRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+                            }
+                            else if (currentArgName == "defaultSeverity")
+                            {
+                                if (currentArgExprIdentifier != null)
+                                {
+                                    if (currentArgExprIdentifier.Identifier.Text == "")
+                                    {
+                                        if (report)
+                                        {
+                                            ReportDiagnostic(context, DefaultSeverityErrorRule, currentArg.GetLocation());
+                                        }
+
+                                        return returnInfo;
+                                    }
+                                }
+
+                                var memberAccessExpr = currentArgExpr as MemberAccessExpressionSyntax;
+                                if (memberAccessExpr == null)
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+
+                                var expressionIdentifier = memberAccessExpr.Expression as IdentifierNameSyntax;
+                                if (expressionIdentifier == null)
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+
+                                string expressionText = expressionIdentifier.Identifier.Text;
+
+                                var expressionName = memberAccessExpr.Name as IdentifierNameSyntax;
+                                if (expressionName == null)
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+
+                                string identifierName = memberAccessExpr.Name.Identifier.Text;
+
+                                List<string> severities = new List<string> { "Warning", "Error" };
+
+                                if (expressionText != "DiagnosticSeverity")
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+                                else if (!severities.Contains(identifierName))
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, DefaultSeverityErrorRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+                            }
+                            else if (currentArgName == "id")
+                            {
+                                if (currentArgExprIdentifier != null)
+                                {
+                                    if (currentArgExprIdentifier.Identifier.Text == "")
+                                    {
+                                        if (report)
+                                        {
+                                            ReportDiagnostic(context, IdDeclTypeErrorRule, Location.Create(currentArg.SyntaxTree, currentArg.NameColon.ColonToken.TrailingTrivia.FullSpan));
+                                        }
+
+                                        return returnInfo;
+                                    }
+                                }
+
+
+                                if (currentArgExpr.IsKind(SyntaxKind.StringLiteralExpression))
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, IdStringLiteralRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+
+                                if (!currentArgExpr.IsKind(SyntaxKind.IdentifierName))
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, IdDeclTypeErrorRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+
+                                bool ruleIdFound = false;
+
+                                foreach (string idName in idNames)
+                                {
+                                    if (idName == currentArgExprIdentifier.Identifier.Text)
+                                    {
+                                        ruleIdFound = true;
+                                    }
+                                }
+
+                                if (!ruleIdFound)
+                                {
+                                    if (report)
+                                    {
+                                        ReportDiagnostic(context, MissingIdDeclarationRule, currentArgExpr.GetLocation());
+                                    }
+
+                                    return returnInfo;
+                                }
+                            }
+                            else if (currentArgName == "title" || currentArgName == "messageFormat" || currentArgName == "category")
+                            {
+                                Dictionary<string, string> argDefaults = new Dictionary<string, string>();
+                                argDefaults.Add("title", "Enter a title for this diagnostic");
+                                argDefaults.Add("messageFormat", "Enter a message to be displayed with this diagnostic");
+                                argDefaults.Add("category", "Enter a category for this diagnostic (e.g. Formatting)");
+
+                                if (currentArgExpr.IsKind(SyntaxKind.StringLiteralExpression))
+                                {
+                                    if ((currentArgExpr as LiteralExpressionSyntax).Token.ValueText == argDefaults[currentArgName])
+                                    {
+                                        if (currentArgName == "title")
+                                        {
+                                            if (report)
+                                            {
+                                                ReportDiagnostic(context, TitleRule, currentArgExpr.GetLocation());
+                                            }
+
+                                            return returnInfo;
+                                        }
+                                        else if (currentArgName == "messageFormat")
+                                        {
+                                            if (report)
+                                            {
+                                                ReportDiagnostic(context, MessageRule, currentArgExpr.GetLocation());
+                                            }
+
+                                            return returnInfo;
+                                        }
+                                        else if (currentArgName == "category")
+                                        {
+                                            if (report)
+                                            {
+                                                ReportDiagnostic(context, CategoryRule, currentArgExpr.GetLocation());
+                                            }
+
+                                            return returnInfo;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (ruleArgumentList.Arguments.Count != 6)
+                    {
+                        return returnInfo;
+                    }
+                }
+
+                return returnInfo;
+            }
+
+            internal static string IsId(FieldDeclarationSyntax fieldDecl)
+            {
+                var modifiers = fieldDecl.Modifiers;
+                if (modifiers == null || modifiers.Count != 2)
+                {
+                    return null;
+                }
+
+                var publicModifier = modifiers[0];
+                var constModifier = modifiers[1];
+                if (publicModifier == null || constModifier == null || publicModifier.Text != "public" || constModifier.Text != "const")
+                {
+                    return null;
+                }
+
+                var variableDeclaration = fieldDecl.Declaration as VariableDeclarationSyntax;
+                if (variableDeclaration == null)
+                {
+                    return null;
+                }
+
+                var type = variableDeclaration.Type as TypeSyntax;
+                if (type == null || type.ToString() != "string")
+                {
+                    return null;
+                }
+
+                var variable = variableDeclaration.Variables[0] as VariableDeclaratorSyntax;
+                if (variable == null)
+                {
+                    return null;
+                }
+
+                var equalsValue = variable.Initializer as EqualsValueClauseSyntax;
+                if (equalsValue == null)
+                {
+                    return null;
+                }
+
+                var identifier = variable.Identifier;
+                if (identifier == null)
+                {
+                    return null;
+                }
+
+                return identifier.Text;
+            }
+
+            internal static FieldDeclarationSyntax GetFirstId(ClassDeclarationSyntax classDecl)
+            {
+                var fieldDecls = classDecl.Members.OfType<FieldDeclarationSyntax>();
+                foreach (FieldDeclarationSyntax field in fieldDecls)
+                {
+                    var name = IsId(field);
+                    if (name == null)
+                    {
+                        continue;
+                    }
+
+                    return field;
+                }
+
+                return null;
+            }
+        }
+        
+        internal protected class RuleInfo
+        {
+            public List<string> RuleNames
+            {
+                get;
+                set;
+            }
+
+            public bool correctRuleFound
+            {
+                get;
+                set;
             }
         } 
 
