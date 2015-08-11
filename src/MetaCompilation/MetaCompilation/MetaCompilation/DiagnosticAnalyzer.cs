@@ -322,7 +322,7 @@ namespace MetaCompilation
             context.RegisterSyntaxNodeAction(SuppDiagMissing, SyntaxKind.ClassDeclaration);
             context.RegisterSyntaxNodeAction(SuppDiagAnalysis, SyntaxKind.PropertyDeclaration);
             context.RegisterSyntaxNodeAction(InitMissing, SyntaxKind.ClassDeclaration);
-            context.RegisterSyntaxNodeAction(InitAnalysis, SyntaxKind.MethodDeclaration);
+            context.RegisterSyntaxNodeAction(InitAnalysis, SyntaxKind.MethodDeclaration, SyntaxKind.ReturnStatement);
             context.RegisterSyntaxNodeAction(AnalysisMethodMissing, SyntaxKind.ClassDeclaration);
             context.RegisterSyntaxNodeAction(MethodAnalysis, SyntaxKind.MethodDeclaration);
         }
@@ -482,11 +482,33 @@ namespace MetaCompilation
 
         private void InitAnalysis(SyntaxNodeAnalysisContext context)
         {
-            var methodDecl = (MethodDeclarationSyntax)context.Node;
-            var correctClass = MetaHelper.InCorrectClass(methodDecl);
+            var returnStatement = context.Node as ReturnStatementSyntax;
+            var methodDecl = context.Node as MethodDeclarationSyntax;
+            ClassDeclarationSyntax correctClass = null;
+            if (returnStatement == null)
+            {
+                correctClass = MetaHelper.InCorrectClass(methodDecl);
+            }
+            else
+            {
+                correctClass = MetaHelper.InCorrectClass(returnStatement);
+            }
+
             if (correctClass == null)
             {
                 return;
+            }
+
+            if (methodDecl == null)
+            {
+                foreach (MethodDeclarationSyntax method in correctClass.Members.OfType<MethodDeclarationSyntax>())
+                {
+                    if (method.Identifier.Text == "Initialize")
+                    {
+                        methodDecl = method;
+                        break;
+                    }
+                }
             }
 
             if (methodDecl.Identifier.Text != "Initialize")
